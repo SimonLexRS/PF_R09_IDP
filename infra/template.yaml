@@ -1,0 +1,430 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  PF R09 - Procesamiento inteligente de documentos (UCB, Computacion en la Nube).
+  S3 privado -> Lambda ingest -> SQS (+DLQ) -> Lambda worker (Textract AnalyzeExpense)
+  -> DynamoDB; API Gateway REST con clave + Lambda de revision; CloudWatch y SNS.
+  Todas las funciones usan LabRole (AWS Academy Learner Lab no permite crear roles).
+
+Parameters:
+  DocsBucketName:
+    Type: String
+    Default: sars-r09-docs-0039
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    Description: Nombre del bucket de documentos (convencion iniciales-reto-uso-cuenta)
+  LabRoleArn:
+    Type: String
+    Default: ""
+    Description: ARN de LabRole. Vacio = arn:aws:iam::<cuenta>:role/LabRole
+  ConfidenceThreshold:
+    Type: Number
+    Default: 90
+    MinValue: 50
+    MaxValue: 99
+    Description: Confianza minima (%) para aceptar un campo sin revision humana
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Correo para alarmas SNS (opcional; hay que confirmar la suscripcion)
+  EnableFaultInjection:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Si es true, los archivos incoming/chaos-* fallan a proposito (demo de reintentos y DLQ)
+
+Conditions:
+  HasRoleArn: !Not [!Equals [!Ref LabRoleArn, ""]]
+  HasEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+  FaultInjection: !Equals [!Ref EnableFaultInjection, "true"]
+
+Resources:
+  # ---------------------------------------------------------------- Almacenamiento
+  DocsBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: IngestS3Permission
+    Properties:
+      BucketName: !Ref DocsBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - Id: limpiar-versiones-antiguas
+            Status: Enabled
+            NoncurrentVersionExpiration: { NoncurrentDays: 7 }
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins: [!Sub "https://${ReviewApi}.execute-api.${AWS::Region}.amazonaws.com"]
+            AllowedHeaders: ["*"]
+            MaxAge: 300
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt IngestFunction.Arn
+            Filter:
+              S3Key:
+                Rules: [{ Name: prefix, Value: incoming/ }]
+      Tags: [{ Key: proyecto, Value: final }]
+
+  DocsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DocsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SoloHTTPS
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !Sub "arn:aws:s3:::${DocsBucket}"
+              - !Sub "arn:aws:s3:::${DocsBucket}/*"
+            Condition: { Bool: { "aws:SecureTransport": "false" } }
+
+  DocumentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-documents"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: docId, AttributeType: S }
+        - { AttributeName: status, AttributeType: S }
+        - { AttributeName: createdAt, AttributeType: S }
+      KeySchema: [{ AttributeName: docId, KeyType: HASH }]
+      GlobalSecondaryIndexes:
+        - IndexName: StatusIndex
+          KeySchema:
+            - { AttributeName: status, KeyType: HASH }
+            - { AttributeName: createdAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      SSESpecification: { SSEEnabled: true }
+      Tags: [{ Key: proyecto, Value: final }]
+
+  # ---------------------------------------------------------------- Colas
+  JobsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-jobs-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags: [{ Key: proyecto, Value: final }]
+
+  JobsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-jobs"
+      VisibilityTimeout: 360          # 6 x timeout del worker (60 s), recomendacion de AWS
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt JobsDLQ.Arn
+        maxReceiveCount: 3
+      Tags: [{ Key: proyecto, Value: final }]
+
+  # ---------------------------------------------------------------- Logs
+  IngestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-ingest"
+      RetentionInDays: 14
+      Tags: [{ Key: proyecto, Value: final }]
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-worker"
+      RetentionInDays: 14
+      Tags: [{ Key: proyecto, Value: final }]
+  ReviewLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-review"
+      RetentionInDays: 14
+      Tags: [{ Key: proyecto, Value: final }]
+
+  # ---------------------------------------------------------------- Funciones
+  IngestFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: IngestLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-ingest"
+      Description: Valida el archivo, registra el documento y encola el trabajo
+      Runtime: python3.12
+      Handler: ingest.handler
+      Code: ../src
+      Role: !If [HasRoleArn, !Ref LabRoleArn, !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"]
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DocumentsTable
+          QUEUE_URL: !Ref JobsQueue
+          MAX_SIZE_MB: "5"
+          ALLOWED_EXT: ".pdf,.png,.jpg,.jpeg,.tif,.tiff"
+      Tags: [{ Key: proyecto, Value: final }]
+
+  IngestS3Permission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IngestFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub "arn:aws:s3:::${DocsBucketName}"
+
+  WorkerFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: WorkerLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-worker"
+      Description: Extrae campos con Textract AnalyzeExpense, valida y guarda el estado
+      Runtime: python3.12
+      Handler: worker.handler
+      Code: ../src
+      Role: !If [HasRoleArn, !Ref LabRoleArn, !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"]
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DocumentsTable
+          BUCKET_NAME: !Ref DocsBucketName
+          CONFIDENCE_THRESHOLD: !Ref ConfidenceThreshold
+          MIN_CORROBORATED_CONFIDENCE: "70"
+          MAX_RECEIVE_COUNT: "3"
+          QUEUE_URL: !Ref JobsQueue
+          RETRY_BACKOFF_SECONDS: "10"
+          FAULT_INJECTION_PREFIX: !If [FaultInjection, "incoming/chaos-", ""]
+      Tags: [{ Key: proyecto, Value: final }]
+
+  WorkerQueueMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt JobsQueue.Arn
+      FunctionName: !Ref WorkerFunction
+      BatchSize: 5
+      FunctionResponseTypes: [ReportBatchItemFailures]
+      ScalingConfig: { MaximumConcurrency: 2 }   # protege la cuota TPS de Textract
+
+  ReviewFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ReviewLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-review"
+      Description: API y vista web de revision de campos con baja confianza
+      Runtime: python3.12
+      Handler: review.handler
+      Code: ../src
+      Role: !If [HasRoleArn, !Ref LabRoleArn, !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"]
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DocumentsTable
+          BUCKET_NAME: !Ref DocsBucketName
+          PRESIGNED_TTL_SECONDS: "300"
+      Tags: [{ Key: proyecto, Value: final }]
+
+  # ---------------------------------------------------------------- API Gateway REST
+  ReviewApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${AWS::StackName}-review-api"
+      Description: API de revision de documentos (R09)
+      EndpointConfiguration: { Types: [REGIONAL] }
+      Tags: [{ Key: proyecto, Value: final }]
+
+  UiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: { RestApiId: !Ref ReviewApi, ParentId: !GetAtt ReviewApi.RootResourceId, PathPart: ui }
+  UiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ReviewApi
+      ResourceId: !Ref UiResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false        # solo devuelve HTML estatico, sin datos
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ReviewFunction.Arn}/invocations"
+
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: { RestApiId: !Ref ReviewApi, ParentId: !GetAtt ReviewApi.RootResourceId, PathPart: api }
+  ApiProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: { RestApiId: !Ref ReviewApi, ParentId: !Ref ApiResource, PathPart: "{proxy+}" }
+  ApiProxyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ReviewApi
+      ResourceId: !Ref ApiProxyResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ReviewFunction.Arn}/invocations"
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: [UiMethod, ApiProxyMethod]
+    Properties: { RestApiId: !Ref ReviewApi }
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref ReviewApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+      MethodSettings:
+        - { ResourcePath: "/*", HttpMethod: "*", ThrottlingRateLimit: 10, ThrottlingBurstLimit: 20, MetricsEnabled: true }
+      Tags: [{ Key: proyecto, Value: final }]
+
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: !Sub "${AWS::StackName}-revisor"
+      Enabled: true
+      Tags: [{ Key: proyecto, Value: final }]
+
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: !Sub "${AWS::StackName}-plan"
+      ApiStages: [{ ApiId: !Ref ReviewApi, Stage: !Ref ApiStage }]
+      Throttle: { RateLimit: 5, BurstLimit: 10 }
+      Quota: { Limit: 5000, Period: DAY }
+      Tags: [{ Key: proyecto, Value: final }]
+
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties: { KeyId: !Ref ApiKey, KeyType: API_KEY, UsagePlanId: !Ref UsagePlan }
+
+  ReviewApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ReviewFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ReviewApi}/*"
+
+  # ---------------------------------------------------------------- Observabilidad
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-alertas"
+      Tags: [{ Key: proyecto, Value: final }]
+  AlertsSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties: { TopicArn: !Ref AlertsTopic, Protocol: email, Endpoint: !Ref AlertEmail }
+
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-dlq-con-mensajes"
+      AlarmDescription: Hay trabajos que agotaron los reintentos y estan en la DLQ
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt JobsDLQ.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+      OKActions: [!Ref AlertsTopic]
+
+  QueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-cola-atrasada"
+      AlarmDescription: El mensaje mas antiguo lleva mas de 5 minutos sin procesarse
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions: [{ Name: QueueName, Value: !GetAtt JobsQueue.QueueName }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  FailedDocsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-documentos-fallidos"
+      AlarmDescription: Al menos un documento termino en estado FAILED en 5 minutos
+      Namespace: IDP/R09
+      MetricName: DocumentsFailed
+      Dimensions: [{ Name: Service, Value: worker }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}-dashboard"
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{"title":"Documentos por resultado","region":"${AWS::Region}","stat":"Sum","period":300,"view":"timeSeries",
+                "metrics":[["IDP/R09","DocumentsReceived","Service","ingest"],["IDP/R09","DocumentsRejected","Service","ingest"],["IDP/R09","DocumentsProcessed","Service","worker"],["IDP/R09","DocumentsNeedsReview","Service","worker"],["IDP/R09","DocumentsFailed","Service","worker"],["IDP/R09","DocumentsReviewed","Service","review"]]}},
+              {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{"title":"Latencia Textract (ms) y confianza media (%)","region":"${AWS::Region}","period":300,"view":"timeSeries",
+                "metrics":[["IDP/R09","TextractLatencyMs","Service","worker",{"stat":"p90"}],["IDP/R09","AvgFieldConfidence","Service","worker",{"stat":"Average","yAxis":"right"}]]}},
+              {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{"title":"Colas SQS","region":"${AWS::Region}","stat":"Maximum","period":60,"view":"timeSeries",
+                "metrics":[["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","${Q}"],["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","${D}"],["AWS/SQS","ApproximateAgeOfOldestMessage","QueueName","${Q}",{"yAxis":"right"}]]}},
+              {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"Lambda: invocaciones, errores y duracion","region":"${AWS::Region}","period":300,"view":"timeSeries",
+                "metrics":[["AWS/Lambda","Invocations","FunctionName","${AWS::StackName}-worker",{"stat":"Sum"}],["AWS/Lambda","Errors","FunctionName","${AWS::StackName}-worker",{"stat":"Sum"}],["AWS/Lambda","Duration","FunctionName","${AWS::StackName}-worker",{"stat":"p90","yAxis":"right"}],["AWS/Lambda","Errors","FunctionName","${AWS::StackName}-ingest",{"stat":"Sum"}],["AWS/Lambda","Errors","FunctionName","${AWS::StackName}-review",{"stat":"Sum"}]]}},
+              {"type":"alarm","x":0,"y":12,"width":24,"height":3,"properties":{"title":"Alarmas","alarms":["${A1}","${A2}","${A3}"]}}
+            ]
+          }
+        - Q: !GetAtt JobsQueue.QueueName
+          D: !GetAtt JobsDLQ.QueueName
+          A1: !GetAtt DLQAlarm.Arn
+          A2: !GetAtt QueueAgeAlarm.Arn
+          A3: !GetAtt FailedDocsAlarm.Arn
+
+Outputs:
+  BucketName:
+    Value: !Ref DocsBucket
+  TableName:
+    Value: !Ref DocumentsTable
+  QueueUrl:
+    Value: !Ref JobsQueue
+  DLQUrl:
+    Value: !Ref JobsDLQ
+  ApiBaseUrl:
+    Value: !Sub "https://${ReviewApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  ReviewUiUrl:
+    Description: Vista de revision (pedira la clave de API)
+    Value: !Sub "https://${ReviewApi}.execute-api.${AWS::Region}.amazonaws.com/prod/ui"
+  RestApiId:
+    Value: !Ref ReviewApi
+  ApiKeyId:
+    Description: "Obtener el valor: aws apigateway get-api-key --api-key <id> --include-value"
+    Value: !Ref ApiKey
+  AlertsTopicArn:
+    Value: !Ref AlertsTopic
+  DashboardUrl:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-dashboard"

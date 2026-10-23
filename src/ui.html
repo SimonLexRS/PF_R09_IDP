@@ -1,0 +1,729 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revisión de facturas · R09</title>
+<style>
+  :root {
+    --bg:#f4f6fa; --card:#ffffff; --ink:#18202f; --muted:#667085; --line:#e4e7ee; --soft:#f1f4f9;
+    --accent:#3b5bfd; --accent-ink:#ffffff; --accent-soft:#eaefff;
+    --ok:#12805c; --ok-soft:#e6f5ee; --warn:#a15c00; --warn-soft:#fff4e0; --bad:#c2321f; --bad-soft:#fdecea;
+    --info:#3a5ccc; --info-soft:#ecf1ff; --shadow:0 1px 2px rgba(16,24,40,.06),0 2px 8px rgba(16,24,40,.05);
+    --radius:12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f131a; --card:#171c25; --ink:#e7eaf0; --muted:#98a2b3; --line:#283041; --soft:#1d2330;
+      --accent:#7b93ff; --accent-ink:#0f131a; --accent-soft:#1f2850;
+      --ok:#4cc38a; --ok-soft:#14291f; --warn:#f0b24a; --warn-soft:#2c2412; --bad:#ff7b6b; --bad-soft:#2f1714;
+      --info:#8aa4ff; --info-soft:#1b2342; --shadow:none; }
+  }
+  * { box-sizing:border-box; }
+  main, main * { min-width:0; }
+  .wrap-any { overflow-wrap:anywhere; word-break:break-word; }
+  html, body { margin:0; background:var(--bg); color:var(--ink); }
+  body { font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  button, input { font:inherit; color:inherit; }
+  h1,h2,h3,h4 { margin:0; letter-spacing:-.01em; }
+  .muted { color:var(--muted); } .small { font-size:12px; }
+  code, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+
+  /* ---------- barra global de carga ---------- */
+  #loadbar { position:fixed; inset:0 0 auto 0; height:3px; z-index:50; overflow:hidden; opacity:0; transition:opacity .25s; background:var(--accent-soft); }
+  #loadbar.on { opacity:1; }
+  #loadbar::before, #loadbar::after { content:""; position:absolute; top:0; bottom:0; background:var(--accent); border-radius:3px; }
+  #loadbar::before { animation:lb1 2s cubic-bezier(.65,.81,.73,.4) infinite; }
+  #loadbar::after  { animation:lb2 2s cubic-bezier(.16,.84,.44,1) infinite; animation-delay:1.15s; }
+  @keyframes lb1 { 0% { left:-35%; right:100%; } 60%,100% { left:100%; right:-90%; } }
+  @keyframes lb2 { 0% { left:-200%; right:100%; } 60%,100% { left:107%; right:-8%; } }
+
+  /* ---------- encabezado ---------- */
+  @media (max-width:700px){ header { position:static !important; } .conn { width:100%; } .conn input.txt { flex:1 1 140px; } }
+  header { position:sticky; top:0; z-index:20; background:var(--card); border-bottom:1px solid var(--line); }
+  .bar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:12px 20px; max-width:1600px; margin:0 auto; }
+  .brand { display:flex; gap:12px; align-items:center; }
+  .logo { width:34px; height:34px; border-radius:9px; background:var(--accent); color:var(--accent-ink); display:grid; place-items:center; flex:none; }
+  .brand h1 { font-size:16px; } .brand p { margin:0; font-size:12px; color:var(--muted); }
+  .conn { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  input.txt { padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); min-width:0; }
+  input.txt:focus { outline:2px solid var(--accent-soft); border-color:var(--accent); }
+  .btn { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:8px; border:1px solid var(--line);
+         background:var(--card); cursor:pointer; white-space:nowrap; transition:background .15s, border-color .15s; }
+  .btn:hover { background:var(--soft); }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+  .btn.primary:hover { filter:brightness(1.05); }
+  .btn.ghost { border-color:transparent; background:transparent; color:var(--accent); font-weight:600; }
+  .btn:disabled { opacity:.6; cursor:progress; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); display:inline-block; }
+  .dot.on { background:var(--ok); box-shadow:0 0 0 3px var(--ok-soft); }
+
+  /* ---------- spinner ---------- */
+  .spin { width:16px; height:16px; border-radius:50%; border:2px solid currentColor; border-right-color:transparent;
+          animation:rot .7s linear infinite; flex:none; display:inline-block; vertical-align:-3px; }
+  .spin.lg { width:28px; height:28px; border-width:3px; color:var(--accent); }
+  @keyframes rot { to { transform:rotate(360deg); } }
+
+  main { max-width:1600px; margin:0 auto; padding:16px 20px 40px; display:grid; grid-template-columns:minmax(0,1fr); gap:16px; }
+  @media (max-width:560px){ main { padding:12px 12px 32px; } .bar { padding:12px; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); }
+  .pad { padding:16px; }
+
+  /* ---------- cómo funciona ---------- */
+  #how[hidden] { display:none; }
+  .how-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .how-head h2 { font-size:15px; } .how-head p { margin:4px 0 0; color:var(--muted); max-width:900px; }
+  .pipeline { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin-top:14px; }
+  .step { position:relative; background:var(--soft); border-radius:10px; padding:12px; }
+  .step .ic { width:30px; height:30px; border-radius:8px; display:grid; place-items:center; background:var(--card); color:var(--accent); margin-bottom:8px; }
+  .step b { display:block; font-size:13px; } .step span { font-size:12px; color:var(--muted); }
+  .step .svc { display:inline-block; margin-top:6px; font-size:11px; font-weight:600; color:var(--accent); background:var(--accent-soft); padding:1px 7px; border-radius:99px; }
+  .rules { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px; margin-top:12px; }
+  .rule { border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:12.5px; }
+  .rule b { display:block; font-size:13px; margin-bottom:2px; }
+
+  /* ---------- KPIs ---------- */
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .kpi { padding:12px 14px; }
+  .kpi .lbl { font-size:12px; color:var(--muted); }
+  .kpi .val { font-size:22px; font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .kpi .sub { font-size:11.5px; color:var(--muted); }
+
+  /* ---------- layout principal ---------- */
+  .work { display:grid; grid-template-columns:minmax(320px,400px) minmax(0,1fr); gap:16px; align-items:start; }
+  @media (max-width:980px){ .work { grid-template-columns:1fr; } }
+  aside.card { position:sticky; top:76px; max-height:calc(100vh - 92px); display:flex; flex-direction:column; }
+  @media (max-width:980px){ aside.card { position:static; max-height:none; } }
+  .sec-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .sec-title h3 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+
+  /* ---------- zona de carga ---------- */
+  .drop { border:1.5px dashed var(--line); border-radius:10px; padding:16px; text-align:center; cursor:pointer; transition:.15s; background:var(--soft); }
+  .drop:hover, .drop.over { border-color:var(--accent); background:var(--accent-soft); }
+  .drop b { display:block; } .drop span { font-size:12px; color:var(--muted); }
+  .uploads { display:grid; gap:10px; margin-top:10px; }
+  .up { border:1px solid var(--line); border-radius:12px; padding:12px; display:grid; gap:12px; background:var(--card); animation:in .25s ease-out; }
+  .up.final-ok { border-color:color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .up.final-bad { border-color:color-mix(in srgb, var(--bad) 45%, var(--line)); }
+  .up-top { display:grid; grid-template-columns:42px minmax(0,1fr) auto; gap:10px; align-items:center; }
+  .thumb { position:relative; width:42px; height:54px; border-radius:6px; border:1px solid var(--line); overflow:hidden;
+           background:var(--soft) center top / cover no-repeat; display:grid; place-items:center; color:var(--muted); font-size:10px; font-weight:700; }
+  .thumb .beam { position:absolute; left:-10%; right:-10%; height:18px; top:-18px; opacity:0; pointer-events:none;
+           background:linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent) 60%, transparent) 70%, var(--accent) 72%, transparent 74%); }
+  .up.scanning .thumb .beam { opacity:1; animation:beam 1.4s cubic-bezier(.45,0,.55,1) infinite alternate; }
+  @keyframes beam { from { top:-18px; } to { top:100%; } }
+  .up .name { font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .up .msg { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+  .up .time { font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums; align-self:start; }
+  .progress { height:6px; border-radius:99px; background:var(--soft); overflow:hidden; }
+  .progress > i { display:block; height:100%; width:0; border-radius:99px; background:linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #fff)); transition:width .2s; }
+  .progress.done { display:none; }
+  .stepper { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); }
+  .stepper li { position:relative; display:grid; justify-items:center; gap:5px; font-size:10.5px; line-height:1.2; color:var(--muted); text-align:center; }
+  .stepper li::before { content:""; position:absolute; top:10px; left:calc(-50% + 12px); right:calc(50% + 12px); height:2px; background:var(--line);
+                        background-image:linear-gradient(90deg, var(--accent), var(--accent)); background-repeat:no-repeat; background-size:0% 100%; transition:background-size .5s ease; }
+  .stepper li:first-child::before { display:none; }
+  .stepper li.done::before, .stepper li.now::before, .stepper li.fail::before { background-size:100% 100%; }
+  .node { position:relative; width:22px; height:22px; border-radius:50%; border:2px solid var(--line); background:var(--card);
+          display:grid; place-items:center; font-size:11px; font-weight:700; transition:background .3s, border-color .3s, color .3s; }
+  .stepper li.done .node { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+  .stepper li.now { color:var(--accent); font-weight:600; }
+  .stepper li.now .node { border-color:var(--accent-soft); color:var(--accent); }
+  .stepper li.now .node::after { content:""; position:absolute; inset:-2px; border-radius:50%; border:2px solid var(--accent); border-right-color:transparent; animation:rot .8s linear infinite; }
+  .stepper li.ok .node { background:var(--ok); border-color:var(--ok); color:#fff; animation:pop .35s ease-out; }
+  .stepper li.ok { color:var(--ok); font-weight:600; }
+  .stepper li.fail .node { background:var(--bad); border-color:var(--bad); color:#fff; animation:pop .35s ease-out; }
+  .stepper li.fail { color:var(--bad); font-weight:600; }
+  @keyframes pop { 0% { transform:scale(.6); } 70% { transform:scale(1.15); } 100% { transform:scale(1); } }
+
+  /* ---------- filtros y lista ---------- */
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin:14px 0 10px; }
+  .chip { border:1px solid var(--line); background:var(--card); padding:4px 10px; border-radius:99px; font-size:12px; cursor:pointer; }
+  .chip.active { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); font-weight:600; }
+  .chip .n { opacity:.7; margin-left:3px; font-variant-numeric:tabular-nums; }
+  .list { overflow:auto; margin:0 -16px -16px; border-top:1px solid var(--line); }
+  .row { display:grid; grid-template-columns:1fr auto; gap:6px 10px; padding:10px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .row:hover { background:var(--soft); } .row.sel { background:var(--accent-soft); box-shadow:inset 3px 0 0 var(--accent); }
+  .row .fn { font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row .meta { grid-column:1 / -1; display:flex; gap:10px; align-items:center; font-size:11.5px; color:var(--muted); }
+  .empty { padding:28px 16px; text-align:center; color:var(--muted); }
+
+  .st { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; padding:2px 8px; border-radius:99px; white-space:nowrap; letter-spacing:.02em; }
+  .st.PROCESSED, .st.REVIEWED { background:var(--ok-soft); color:var(--ok); }
+  .st.NEEDS_REVIEW { background:var(--warn-soft); color:var(--warn); }
+  .st.FAILED, .st.REJECTED { background:var(--bad-soft); color:var(--bad); }
+  .st.QUEUED, .st.PROCESSING, .st.RETRYING { background:var(--info-soft); color:var(--info); }
+  .st.QUEUED::before, .st.PROCESSING::before, .st.RETRYING::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; animation:pulse 1s infinite; }
+
+  /* ---------- skeleton ---------- */
+  .sk { position:relative; overflow:hidden; background:var(--soft); border-radius:6px; }
+  .sk::after { content:""; position:absolute; inset:0; transform:translateX(-100%);
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent); animation:shimmer 1.2s infinite; }
+  @media (prefers-color-scheme: dark){ .sk::after { background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent); } }
+  @keyframes shimmer { to { transform:translateX(100%); } }
+
+  /* ---------- detalle ---------- */
+  .detail-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:start; padding:16px; border-bottom:1px solid var(--line); }
+  @media (max-width:640px){ .detail-head { grid-template-columns:1fr; } }
+  .detail-head h2 { font-size:16px; line-height:1.35; overflow-wrap:anywhere; word-break:break-word; }
+  .detail-head h2 .st { margin-left:6px; vertical-align:2px; }
+  .explain { margin:6px 0 0; font-size:13px; color:var(--muted); max-width:760px; }
+  .detail-body { display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); gap:16px; padding:16px; }
+  @media (max-width:1360px){ .detail-body { grid-template-columns:minmax(0,1fr); } .prev-wrap { position:static !important; } }
+  .preview { width:100%; border:1px solid var(--line); border-radius:10px; background:#fff; display:block; }
+  iframe.preview { height:min(760px, 75vh); }
+  img.preview { max-height:80vh; object-fit:contain; }
+  .prev-wrap { position:sticky; top:84px; }
+  .callout { border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:13px; }
+  .callout.ok { background:var(--ok-soft); color:var(--ok); } .callout.warn { background:var(--warn-soft); color:var(--warn); }
+  .callout.bad { background:var(--bad-soft); color:var(--bad); }
+  .callout ul { margin:6px 0 0; padding-left:18px; } .callout li { margin:2px 0; color:var(--ink); }
+  .group { margin-bottom:14px; } .group h4 { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:0 0 6px; }
+  .field { display:grid; grid-template-columns:minmax(110px,30%) minmax(0,1fr); gap:6px 12px; align-items:start; padding:8px 10px; border-radius:8px; }
+  .field + .field { margin-top:2px; }
+  .field.review { background:var(--warn-soft); } .field.missing { background:var(--bad-soft); }
+  @media (max-width:520px){ .field { grid-template-columns:minmax(0,1fr); } }
+  .val { display:grid; gap:6px; } .val-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; }
+  .field .nm { font-weight:600; font-size:13px; } .field .src { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
+  .field input { width:100%; padding:7px 9px; border:1px solid var(--line); border-radius:7px; background:var(--card); }
+  .field input.changed { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .tags { display:flex; flex-wrap:wrap; gap:4px; }
+  .tag { font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:99px; cursor:help; }
+  .tag.warn { background:var(--warn); color:#fff; } .tag.ok { background:var(--ok-soft); color:var(--ok); } .tag.bad { background:var(--bad); color:#fff; }
+  .conf { font-size:11.5px; display:flex; align-items:center; gap:8px; white-space:nowrap; }
+  .meter { position:relative; width:110px; flex:none; height:7px; border-radius:99px; background:var(--soft); overflow:visible; }
+  .meter > i { position:absolute; left:0; top:0; bottom:0; border-radius:99px; }
+  .meter .mk { position:absolute; top:-3px; bottom:-3px; width:1.5px; background:var(--muted); opacity:.55; }
+  table.items { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.items { table-layout:fixed; } table.items th, table.items td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+  table.items th:nth-child(n+2), table.items td:nth-child(n+2) { width:72px; }
+  table.items th { color:var(--muted); font-weight:600; font-size:11.5px; }
+  .timeline { list-style:none; margin:0; padding:0 0 0 14px; border-left:2px solid var(--line); }
+  .timeline li { position:relative; padding:0 0 10px 12px; font-size:12.5px; overflow-wrap:anywhere; }
+  .timeline li::before { content:""; position:absolute; left:-20px; top:5px; width:10px; height:10px; border-radius:50%; background:var(--card); border:2px solid var(--accent); }
+  details.box { border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-top:12px; }
+  details.box summary { cursor:pointer; font-weight:600; font-size:13px; }
+  .placeholder { display:grid; place-items:center; text-align:center; min-height:420px; color:var(--muted); padding:30px; }
+  .placeholder .big { width:56px; height:56px; border-radius:14px; background:var(--accent-soft); color:var(--accent); display:grid; place-items:center; margin:0 auto 12px; }
+
+  .loading-card { display:grid; place-items:center; gap:12px; padding:36px 16px; color:var(--muted); text-align:center; }
+  .doc-scan { position:relative; width:64px; height:82px; border-radius:8px; border:2px solid var(--line); background:var(--card); overflow:hidden; }
+  .doc-scan i { position:absolute; left:10px; right:10px; height:5px; border-radius:3px; background:var(--soft); }
+  .doc-scan i:nth-child(1){ top:12px; right:24px; } .doc-scan i:nth-child(2){ top:24px; } .doc-scan i:nth-child(3){ top:36px; }
+  .doc-scan i:nth-child(4){ top:48px; right:30px; } .doc-scan i:nth-child(5){ top:60px; }
+  .doc-scan::after { content:""; position:absolute; left:0; right:0; height:16px; top:-16px;
+    background:linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent) 55%, transparent) 75%, var(--accent) 78%, transparent 80%);
+    animation:beam 1.3s cubic-bezier(.45,0,.55,1) infinite alternate; }
+
+  /* ---------- toasts ---------- */
+  #toasts { position:fixed; right:18px; bottom:18px; display:grid; gap:8px; z-index:60; max-width:min(380px, calc(100vw - 36px)); }
+  .toast { overflow-wrap:anywhere; }
+  .toast { background:var(--ink); color:var(--bg); padding:10px 14px; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.18); font-size:13px; animation:in .2s ease-out; }
+  .toast.err { background:var(--bad); color:#fff; } .toast.ok { background:var(--ok); color:#fff; }
+  @keyframes in { from { transform:translateY(8px); opacity:0; } }
+  @media (prefers-reduced-motion: reduce){ *, *::before, *::after { animation:none !important; transition:none !important; } }
+</style>
+</head>
+<body>
+<div id="loadbar" aria-hidden="true"></div>
+
+<header>
+  <div class="bar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+      </div>
+      <div>
+        <h1>Revisión inteligente de facturas</h1>
+        <p>Reto 09 · Extracción automática con Amazon Textract y revisión humana solo de lo dudoso</p>
+      </div>
+    </div>
+    <div class="conn">
+      <button class="btn ghost" id="toggleHow" type="button">¿Cómo funciona?</button>
+      <span class="dot" id="connDot" title="Sin conectar"></span>
+      <input class="txt" id="apikey" type="password" placeholder="Clave de API" autocomplete="off" size="18" aria-label="Clave de API">
+      <input class="txt" id="reviewer" placeholder="Tu nombre (revisor)" size="14" aria-label="Revisor">
+      <button class="btn primary" id="connect" type="button">Conectar</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- ======================= CÓMO FUNCIONA ======================= -->
+  <section class="card pad" id="how">
+    <div class="how-head">
+      <div>
+        <h2>¿Qué hace este sistema?</h2>
+        <p>Un área administrativa recibe muchas facturas. En lugar de transcribirlas a mano, el sistema lee cada documento,
+          extrae sus datos clave, comprueba que sean coherentes y <b>solo envía a una persona los casos dudosos</b>.
+          Así el revisor corrige pocos campos en vez de digitar facturas completas.</p>
+      </div>
+      <button class="btn" id="closeHow" type="button">Ocultar</button>
+    </div>
+    <div class="pipeline">
+      <div class="step"><div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 20h16"/></svg></div>
+        <b>1 · Subes la factura</b><span>PDF de 1 página o imagen, hasta 5 MB, a un bucket privado.</span><br><span class="svc">S3</span></div>
+      <div class="step"><div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></div>
+        <b>2 · Se dispara un evento</b><span>Se valida tipo y tamaño y se registra el documento.</span><br><span class="svc">Lambda ingest</span></div>
+      <div class="step"><div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h12"/></svg></div>
+        <b>3 · Entra a una cola</b><span>Procesamiento asíncrono con reintentos; lo que falla 3 veces va a una cola de fallidos.</span><br><span class="svc">SQS + DLQ</span></div>
+      <div class="step"><div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
+        <b>4 · La IA extrae los campos</b><span>N° de factura, fecha, NIT, montos e ítems, cada uno con su % de confianza.</span><br><span class="svc">Textract</span></div>
+      <div class="step"><div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 12 2 2 4-4"/><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></svg></div>
+        <b>5 · Se valida</b><span>Confianza, formato, cuadre de montos, fechas y facturas duplicadas.</span><br><span class="svc">Lambda worker + DynamoDB</span></div>
+      <div class="step"><div class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></div>
+        <b>6 · Revisión humana</b><span>Aquí corriges solo los campos marcados en amarillo y apruebas.</span><br><span class="svc">API Gateway + esta vista</span></div>
+    </div>
+    <div class="rules">
+      <div class="rule"><b>✅ Se acepta automáticamente</b>Confianza ≥ 90 % y todas las reglas de negocio se cumplen.</div>
+      <div class="rule"><b>🟢 Aceptado con respaldo</b>Confianza 70–90 % confirmada por una regla (<code>CORROBORATED</code>), o el OCR leyó exactamente esos caracteres con ≥ 90 % (<code>OCR_VERIFIED</code>).</div>
+      <div class="rule"><b>🟡 Va a revisión</b>Confianza baja sin respaldo, campo faltante, total que no cuadra o factura duplicada.</div>
+    </div>
+  </section>
+
+  <!-- ======================= INDICADORES ======================= -->
+  <section class="kpis" id="kpis" aria-label="Indicadores"></section>
+
+  <!-- ======================= TRABAJO ======================= -->
+  <section class="work">
+    <aside class="card pad">
+      <div class="sec-title"><h3>Cargar documentos</h3></div>
+      <label class="drop" id="drop" tabindex="0">
+        <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" multiple hidden>
+        <b>Arrastra facturas aquí o haz clic</b>
+        <span>PDF (1 página), PNG, JPG o TIFF · máx. 5 MB · se suben directo a S3 con una URL temporal</span>
+      </label>
+      <div class="uploads" id="uploads"></div>
+
+      <div class="chips" id="chips" role="tablist" aria-label="Filtrar por estado"></div>
+      <div class="list" id="list"></div>
+    </aside>
+
+    <section class="card" id="detail">
+      <div class="placeholder">
+        <div>
+          <div class="big"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></div>
+          <h3>Conecta y elige un documento</h3>
+          <p>1. Pega la clave de API arriba y pulsa <b>Conectar</b>.<br>2. Sube una factura o elige una de la lista.<br>
+            3. Revisa los campos marcados en <b>amarillo</b>, corrige si hace falta y pulsa <b>Guardar y aprobar</b>.</p>
+        </div>
+      </div>
+    </section>
+  </section>
+</main>
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+
+  // ---------------------------------------------------------------- textos
+  const STATUS = {
+    NEEDS_REVIEW: { label: "Requiere revisión", text: "Al menos un campo necesita que una persona lo confirme. Los campos marcados explican por qué." },
+    PROCESSED:    { label: "Aprobado automático", text: "Todos los campos superaron el umbral de confianza o fueron respaldados por una regla. No requiere intervención." },
+    REVIEWED:     { label: "Revisado", text: "Una persona revisó y aprobó los datos. Los campos corregidos quedan con origen «manual»." },
+    QUEUED:       { label: "En cola", text: "Recibido y en la cola SQS; el worker lo tomará en segundos." },
+    PROCESSING:   { label: "Extrayendo", text: "Amazon Textract está leyendo el documento." },
+    RETRYING:     { label: "Reintentando", text: "Hubo un error transitorio; se reintentará con espera exponencial (máximo 3 intentos)." },
+    FAILED:       { label: "Falló", text: "Textract no pudo leer el documento o se agotaron los reintentos (el mensaje quedó en la DLQ)." },
+    REJECTED:     { label: "Rechazado", text: "Rechazado al recibirlo: tipo de archivo no permitido, vacío o mayor a 5 MB. No se envió a Textract." },
+  };
+  const FILTERS = ["NEEDS_REVIEW", "PROCESSED", "REVIEWED", "FAILED", "REJECTED", "QUEUED", "RETRYING", "ALL"];
+  const CODES = {
+    LOW_CONFIDENCE: ["warn", "Confianza baja", "Textract no está seguro de este valor y ninguna regla lo confirma. Compáralo con el documento."],
+    MISSING:        ["bad",  "Faltante", "Campo obligatorio que no se encontró en el documento."],
+    FORMAT:         ["bad",  "Formato", "El valor no tiene el formato esperado (fecha, monto o NIT)."],
+    TOTAL_MISMATCH: ["bad",  "Total no cuadra", "Subtotal − descuento (+ impuesto) no coincide con el total."],
+    ITEMS_MISMATCH: ["bad",  "Ítems no cuadran", "La suma de los ítems no coincide con el subtotal."],
+    BASE_MISMATCH:  ["bad",  "Base > total", "La base de crédito fiscal es mayor que el total."],
+    DATE_FUTURE:    ["bad",  "Fecha futura", "La fecha de emisión es posterior a hoy."],
+    DATE_TOO_OLD:   ["warn", "Fecha antigua", "La factura tiene más de 3 años."],
+    DUPLICATE:      ["bad",  "Duplicada", "Ya existe otra factura con el mismo NIT y número."],
+    CORROBORATED:   ["ok",   "Respaldado", "Confianza media (70–90 %), pero confirmada por una regla de negocio (formato o cuadre de montos)."],
+    OCR_VERIFIED:   ["ok",   "OCR verificado", "La asociación etiqueta→valor fue dudosa, pero el OCR leyó exactamente estos caracteres con ≥ 90 %."],
+  };
+  const GROUPS = [
+    ["Identificación", [["numero_factura", "N° de factura"], ["fecha", "Fecha de emisión"], ["codigo_autorizacion", "Código de autorización"]]],
+    ["Partes", [["proveedor", "Proveedor (emisor)"], ["nit_emisor", "NIT del emisor"], ["cliente", "Cliente"], ["nit_cliente", "NIT/CI del cliente"]]],
+    ["Montos (Bs)", [["subtotal", "Subtotal"], ["descuento", "Descuento"], ["impuesto", "Impuesto"], ["base_credito_fiscal", "Base crédito fiscal"], ["total", "Total"]]],
+  ];
+  const SOURCE = { textract: "Textract", regex: "Regla de texto", manual: "Corregido a mano" };
+  const STAGES = ["Subida", "En cola", "Textract", "Validación", "Listo"];
+  const STAGE_OF = { QUEUED: 1, PROCESSING: 2, RETRYING: 2 };
+  const TERMINAL = new Set(["PROCESSED", "NEEDS_REVIEW", "REVIEWED", "FAILED", "REJECTED"]);
+
+  // ---------------------------------------------------------------- estado
+  let current = "NEEDS_REVIEW", selected = null, connected = false, pollTimer = null, pending = 0;
+  const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } },
+                  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  const sess = { get(k) { try { return sessionStorage.getItem(k) || ""; } catch (e) { return ""; } },
+                 set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} } };
+
+  // ---------------------------------------------------------------- utilidades
+  function el(tag, attrs = {}, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v === true ? "" : v);
+    }
+    for (const k of kids.flat()) if (k !== null && k !== undefined && k !== false) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+    return e;
+  }
+  function toast(msg, kind = "") {
+    const t = el("div", { class: "toast " + kind, role: "status" }, msg);
+    $("toasts").append(t); setTimeout(() => t.remove(), kind === "err" ? 6000 : 3500);
+  }
+  function busy(on) { pending += on ? 1 : -1; $("loadbar").classList.toggle("on", pending > 0); }
+  function fmtDate(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleString("es-BO", { dateStyle: "short", timeStyle: "short" }); } catch (e) { return iso.slice(0, 16).replace("T", " "); }
+  }
+  function ago(iso) {
+    const s = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (!isFinite(s)) return ""; if (s < 60) return "hace segundos"; if (s < 3600) return `hace ${Math.round(s / 60)} min`;
+    if (s < 86400) return `hace ${Math.round(s / 3600)} h`; return fmtDate(iso);
+  }
+  function statusPill(s) { return el("span", { class: "st " + s, title: (STATUS[s] || {}).text }, (STATUS[s] || { label: s }).label); }
+  function displayName(d) { return (d.fileName || "").replace(/^[0-9a-f]{8}-/, ""); }
+
+  async function api(path, opts = {}) {
+    const quiet = opts.quiet; delete opts.quiet;
+    if (!quiet) busy(true);
+    try {
+      const r = await fetch("api/" + path, { ...opts, headers: { "x-api-key": $("apikey").value.trim(), "Content-Type": "application/json", ...(opts.headers || {}) } });
+      const data = await r.json().catch(() => ({}));
+      if (r.status === 403) throw new Error("Clave de API inválida o ausente (HTTP 403)");
+      if (r.status === 429) throw new Error("Demasiadas solicitudes: se alcanzó el límite del plan de uso (HTTP 429)");
+      if (!r.ok) throw new Error(data.error || data.message || "HTTP " + r.status);
+      return data;
+    } finally { if (!quiet) busy(false); }
+  }
+
+  // ---------------------------------------------------------------- KPIs y filtros
+  function renderKpis(s) {
+    const n = (k) => s ? (s[k] || 0) : null;
+    const total = s ? Object.values(s).reduce((a, b) => a + b, 0) : null;
+    const decided = s ? n("PROCESSED") + n("NEEDS_REVIEW") + n("REVIEWED") : 0;
+    const rate = s && decided ? Math.round(100 * n("PROCESSED") / decided) + " %" : "—";
+    const inflight = s ? n("QUEUED") + n("PROCESSING") + n("RETRYING") : null;
+    const items = [
+      ["Documentos", total, "recibidos en total"],
+      ["Aprobados automáticamente", n("PROCESSED"), "sin intervención humana"],
+      ["Requieren revisión", n("NEEDS_REVIEW"), "pendientes para ti"],
+      ["Revisados", n("REVIEWED"), "aprobados por una persona"],
+      ["Con error", s ? n("FAILED") + n("REJECTED") : null, "rechazados o fallidos"],
+      ["Tasa de automatización", rate, inflight ? `${inflight} en proceso…` : "aprobados / decididos"],
+    ];
+    $("kpis").replaceChildren(...items.map(([lbl, val, sub]) => el("div", { class: "card kpi" },
+      el("div", { class: "lbl" }, lbl),
+      val === null ? el("div", { class: "sk", style: "height:26px;width:60%;margin:6px 0 4px" }) : el("div", { class: "val" }, val),
+      el("div", { class: "sub" }, sub))));
+  }
+  function renderChips(s) {
+    const total = s ? Object.values(s).reduce((a, b) => a + b, 0) : 0;
+    $("chips").replaceChildren(...FILTERS.map((st) => el("button", {
+      class: "chip" + (st === current ? " active" : ""), type: "button", role: "tab", "aria-selected": String(st === current),
+      title: st === "ALL" ? "Todos los documentos" : (STATUS[st] || {}).text,
+      onclick: () => { current = st; renderChips(s); loadList(true); } },
+      st === "ALL" ? "Todos" : STATUS[st].label, el("span", { class: "n" }, st === "ALL" ? total : (s && s[st]) || 0))));
+  }
+
+  // ---------------------------------------------------------------- lista
+  function skeletonRows(n = 5) {
+    return Array.from({ length: n }, () => el("div", { class: "row" },
+      el("div", { class: "sk", style: "height:14px;width:70%" }), el("div", { class: "sk", style: "height:14px;width:70px" }),
+      el("div", { class: "meta" }, el("div", { class: "sk", style: "height:10px;width:40%" }))));
+  }
+  let lastStats = null;
+  async function loadList(showSkeleton) {
+    if (showSkeleton) $("list").replaceChildren(...skeletonRows());
+    const data = await api("documents?status=" + current + "&limit=100");
+    const box = $("list");
+    if (!data.items.length) {
+      box.replaceChildren(el("div", { class: "empty" }, current === "NEEDS_REVIEW" ? "🎉 No hay documentos pendientes de revisión." : "No hay documentos en este estado."));
+      return data.items;
+    }
+    box.replaceChildren(...data.items.map((d) => el("div", {
+      class: "row" + (d.docId === selected ? " sel" : ""), tabindex: "0", role: "button",
+      onclick: () => openDoc(d.docId), onkeydown: (e) => { if (e.key === "Enter") openDoc(d.docId); } },
+      el("div", { class: "fn", title: d.fileName }, displayName(d)),
+      statusPill(d.status),
+      el("div", { class: "meta" },
+        el("span", {}, ago(d.createdAt)),
+        d.confidence ? el("span", {}, `conf. media ${Number(d.confidence.avg).toFixed(1)} %`) : null,
+        d.flags && d.flags.length ? el("span", {}, `${d.flags.length} bandera${d.flags.length > 1 ? "s" : ""}`) : null,
+        d.error && !d.flags ? el("span", { title: d.error }, "ver motivo") : null))));
+    return data.items;
+  }
+  async function refresh(showSkeleton = false) {
+    store.set("reviewer", $("reviewer").value); sess.set("apikey", $("apikey").value);
+    if (showSkeleton) { renderKpis(null); }
+    try {
+      lastStats = await api("stats");
+      connected = true; $("connDot").classList.add("on"); $("connDot").title = "Conectado a la API";
+      renderKpis(lastStats); renderChips(lastStats);
+      await loadList(showSkeleton);
+      schedulePoll();
+    } catch (e) {
+      connected = false; $("connDot").classList.remove("on"); $("connDot").title = "Sin conectar";
+      $("list").replaceChildren(el("div", { class: "empty" }, e.message));
+      renderKpis({}); toast(e.message, "err");
+    }
+  }
+  function schedulePoll() {
+    clearTimeout(pollTimer);
+    const s = lastStats || {};
+    const inflight = (s.QUEUED || 0) + (s.PROCESSING || 0) + (s.RETRYING || 0) + $("uploads").children.length;
+    if (connected && inflight > 0) pollTimer = setTimeout(() => refresh(false), 4000);
+  }
+
+  // ---------------------------------------------------------------- carga con progreso
+  function putWithProgress(url, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open("PUT", url);
+      x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      x.onload = () => (x.status >= 200 && x.status < 300 ? resolve() : reject(new Error("S3 respondió HTTP " + x.status)));
+      x.onerror = () => reject(new Error("Error de red al subir a S3"));
+      x.send(file);
+    });
+  }
+  const STAGE_MSG = [
+    "Subiendo a S3 mediante una URL temporal y privada…",
+    "Recibido. Esperando en la cola SQS a que el worker lo tome…",
+    "Amazon Textract está leyendo el documento y extrayendo los campos…",
+    "Validando confianza, formato, cuadre de montos y duplicados…",
+  ];
+  function uploadCard(file) {
+    const ext = (file.name.split(".").pop() || "").toUpperCase();
+    const thumb = el("div", { class: "thumb", "aria-hidden": "true" }, el("span", { class: "beam" }));
+    if (/^image\//.test(file.type)) thumb.style.backgroundImage = `url("${URL.createObjectURL(file)}")`;
+    else thumb.prepend(ext.slice(0, 4));
+    const msg = el("div", { class: "msg" }, "Preparando…");
+    const time = el("span", { class: "time" }, "0:00");
+    const bar = el("i"); const prog = el("div", { class: "progress", role: "progressbar", "aria-label": "Progreso de subida" }, bar);
+    const lis = STAGES.map((n, k) => el("li", {}, el("span", { class: "node" }, String(k + 1)), el("span", {}, n)));
+    const card = el("div", { class: "up", role: "status", "aria-live": "polite" },
+      el("div", { class: "up-top" }, thumb, el("div", {}, el("div", { class: "name", title: file.name }, file.name), msg), time),
+      prog, el("ol", { class: "stepper" }, lis));
+    const t0 = Date.now();
+    const tick = setInterval(() => { const s = Math.round((Date.now() - t0) / 1000); time.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }, 1000);
+    const setStage = (i) => {
+      lis.forEach((li, k) => { li.className = k < i ? "done" : k === i ? "now" : ""; li.firstChild.textContent = k < i ? "✓" : String(k + 1); });
+      card.classList.toggle("scanning", i === 2);
+      if (STAGE_MSG[i]) msg.textContent = STAGE_MSG[i];
+      if (i > 0) prog.classList.add("done");
+    };
+    const finish = (stageIdx, ok, text) => {
+      clearInterval(tick); card.classList.remove("scanning");
+      lis.forEach((li, k) => {
+        li.className = k < stageIdx ? "done" : k === stageIdx ? (ok ? "ok" : "fail") : "";
+        li.firstChild.textContent = k < stageIdx ? "✓" : k === stageIdx ? (ok ? "✓" : "✕") : String(k + 1);
+      });
+      card.classList.add(ok ? "final-ok" : "final-bad"); msg.replaceChildren(...[].concat(text));
+    };
+    setStage(0);
+    $("uploads").prepend(card);
+    return { card, bar, msg, setStage, finish };
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function trackUntilDone(key, ui) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 180000) {
+      await sleep(2000);
+      let items = [];
+      try { items = (await api("documents?status=ALL&limit=100", { quiet: true })).items; } catch (e) { continue; }
+      const d = items.find((x) => x.s3Key === key);
+      if (!d) { ui.msg.textContent = "Esperando el evento de S3 que dispara la ingesta…"; continue; }
+      if (TERMINAL.has(d.status)) {
+        const secs = Math.round((Date.now() - t0) / 1000);
+        if (d.status === "REJECTED") { ui.finish(1, false, [statusPill(d.status), " ", d.error || "rechazado en la ingesta"]); return d; }
+        if (d.status === "FAILED") { ui.finish(2, false, [statusPill(d.status), " ", d.error || "Textract no pudo procesarlo"]); return d; }
+        ui.setStage(3); await sleep(700);                       // la validación ocurre en el mismo worker
+        ui.finish(4, true, [statusPill(d.status), ` · listo en ${secs} s` + (d.flags && d.flags.length ? ` · ${d.flags.length} bandera(s)` : "")]);
+        return d;
+      }
+      ui.setStage(STAGE_OF[d.status] || 1);
+      if (d.status === "RETRYING") ui.msg.textContent = "Error transitorio: se reintentará con espera exponencial (máx. 3 intentos)…";
+    }
+    ui.msg.textContent = "Sigue en proceso; revisa la lista en unos segundos.";
+    return null;
+  }
+  async function uploadFiles(files) {
+    if (!connected) return toast("Primero conecta con tu clave de API", "err");
+    for (const f of files) {
+      const ui = uploadCard(f);
+      try {
+        if (f.size > 5 * 1024 * 1024) toast(`${f.name}: supera 5 MB, el sistema lo rechazará (sirve como caso de error)`);
+        const u = await api("upload-url", { method: "POST", body: JSON.stringify({ filename: f.name }) });
+        await putWithProgress(u.url, f, (p) => { ui.bar.style.width = Math.round(p * 100) + "%"; ui.msg.textContent = `Subiendo a S3… ${Math.round(p * 100)} %`; });
+        ui.bar.style.width = "100%"; ui.setStage(1);
+        refresh(false);
+        trackUntilDone(u.key, ui).then((d) => {
+          if (d) {
+            toast(`${f.name}: ${(STATUS[d.status] || {}).label}`, d.status === "PROCESSED" ? "ok" : d.status === "FAILED" || d.status === "REJECTED" ? "err" : "");
+            refresh(false); if (["NEEDS_REVIEW", "PROCESSED"].includes(d.status)) openDoc(d.docId);
+          }
+          setTimeout(() => { ui.card.remove(); schedulePoll(); }, 20000);
+        });
+      } catch (e) {
+        ui.finish(0, false, e.message); toast(`${f.name}: ${e.message}`, "err");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- detalle
+  function detailSkeleton() {
+    $("detail").replaceChildren(
+      el("div", { class: "detail-head" }, el("div", {}, el("div", { class: "sk", style: "height:18px;width:55%" }), el("div", { class: "sk", style: "height:12px;width:85%;margin-top:10px" }))),
+      el("div", { class: "loading-card" },
+        el("div", { class: "doc-scan", "aria-hidden": "true" }, el("i"), el("i"), el("i"), el("i"), el("i")),
+        el("div", {}, el("b", {}, "Cargando el documento…"), el("div", { class: "small" }, "Leyendo campos extraídos, banderas y trazabilidad desde DynamoDB"))),
+      el("div", { class: "detail-body" },
+        el("div", { class: "sk", style: "height:320px" }),
+        el("div", {}, ...Array.from({ length: 6 }, () => el("div", { class: "sk", style: "height:38px;margin-bottom:8px" })))));
+  }
+  function meter(f, threshold) {
+    const c = Number(f.confidence || 0);
+    const backed = (f.reasons || []).some((x) => x === "CORROBORATED" || x === "OCR_VERIFIED");
+    const color = c >= threshold || (backed && !f.needsReview) ? "var(--ok)" : c >= 70 ? "var(--warn)" : "var(--bad)";
+    const tip = [`Confianza del campo: ${c.toFixed(1)} %`, f.ocrConfidence != null ? `OCR del valor: ${Number(f.ocrConfidence).toFixed(1)} %` : null,
+                 f.mapConfidence != null ? `Asociación etiqueta→valor: ${Number(f.mapConfidence).toFixed(1)} %` : null,
+                 `Líneas: 70 % (mínimo con respaldo) y ${threshold} % (umbral)`].filter(Boolean).join("\n");
+    const fill = el("i"); fill.style.width = Math.max(2, Math.min(100, c)) + "%"; fill.style.background = color;
+    const m70 = el("span", { class: "mk" }); m70.style.left = "70%";
+    const mT = el("span", { class: "mk" }); mT.style.left = threshold + "%";
+    return el("div", { class: "conf", title: tip }, el("div", { class: "meter" }, fill, m70, mT),
+      el("span", {}, c.toFixed(1) + " %"), f.ocrConfidence != null ? el("span", { class: "muted" }, `OCR ${Number(f.ocrConfidence).toFixed(0)} %`) : null);
+  }
+  function tagsFor(f) {
+    return [...new Set(f.reasons || [])].map((code) => {
+      const [kind, label, text] = CODES[code] || ["warn", code, code];
+      return el("span", { class: "tag " + kind, title: text }, label);
+    });
+  }
+
+  async function openDoc(id) {
+    selected = id;
+    document.querySelectorAll(".row").forEach((r) => r.classList.remove("sel"));
+    detailSkeleton();
+    let d;
+    try { d = await api("documents/" + encodeURIComponent(id)); } catch (e) { toast(e.message, "err"); return; }
+    const threshold = Number(d.threshold || 90);
+    const fields = d.fields || {};
+    const editable = ["NEEDS_REVIEW", "PROCESSED", "REVIEWED"].includes(d.status);
+    const inputs = {};
+
+    // Encabezado con explicación del estado
+    const saveBtn = editable ? el("button", { class: "btn primary", type: "button" }, "Guardar y aprobar") : null;
+    const head = el("div", { class: "detail-head" },
+      el("div", {},
+        el("h2", {}, el("span", {}, displayName(d)), statusPill(d.status)),
+        el("p", { class: "explain" }, (STATUS[d.status] || {}).text || ""),
+        el("div", { class: "muted small wrap-any", style: "margin-top:6px" },
+          `Recibido ${fmtDate(d.createdAt)}`, d.textractLatencyMs ? ` · Textract ${(d.textractLatencyMs / 1000).toFixed(1)} s` : "",
+          d.confidence ? ` · confianza media ${Number(d.confidence.avg).toFixed(1)} %` : "", ` · umbral ${threshold} %`,
+          el("span", { class: "mono", title: "Identificador interno" }, ` · ${d.docId}`))),
+      saveBtn);
+
+    // Vista previa
+    const isPdf = /\.pdf$/i.test(d.s3Key || "");
+    const prevLoading = el("div", { class: "placeholder", style: "min-height:300px" }, el("div", {}, el("span", { class: "spin lg" }), el("p", {}, "Cargando documento original…")));
+    const preview = isPdf ? el("iframe", { class: "preview", src: d.originalUrl, title: "Documento original" })
+                          : el("img", { class: "preview", src: d.originalUrl, alt: "Documento original" });
+    preview.style.display = "none";
+    if (!/\.(pdf|png|jpe?g|tiff?)$/i.test(d.s3Key || "") || !d.originalUrl) {
+      prevLoading.replaceChildren(el("p", {}, "Este tipo de archivo no tiene vista previa."));
+    }
+    preview.addEventListener("load", () => { prevLoading.remove(); preview.style.display = "block"; });
+    preview.addEventListener("error", () => { prevLoading.replaceChildren(el("p", {}, "No se pudo mostrar la vista previa (el enlace temporal dura 5 minutos; vuelve a abrir el documento).")); });
+
+    // Resumen de banderas
+    const flags = d.flags || [];
+    let callout;
+    if (d.status === "FAILED" || d.status === "REJECTED") {
+      callout = el("div", { class: "callout bad" }, el("b", {}, "Motivo: "), d.error || "sin detalle");
+    } else if (flags.length) {
+      callout = el("div", { class: "callout warn" }, el("b", {}, `${flags.length} motivo${flags.length > 1 ? "s" : ""} para revisar`),
+        el("ul", {}, ...flags.map((fl) => el("li", {}, el("b", {}, (CODES[fl.code] || [0, fl.code])[1]), ` · ${fl.field}: `, fl.message))));
+    } else if (d.fields) {
+      callout = el("div", { class: "callout ok" }, "✓ Sin banderas: todos los campos son confiables o fueron respaldados por una regla de negocio.");
+    }
+
+    // Campos agrupados
+    const groups = GROUPS.map(([title, list]) => el("div", { class: "group" }, el("h4", {}, title), ...list.map(([key, label]) => {
+      const f = fields[key];
+      const inp = el("input", { "aria-label": label, value: f ? f.value : "", placeholder: f ? "" : "no encontrado — escríbelo si aparece en el documento", disabled: !editable });
+      inp.value = f ? f.value : "";
+      inp.addEventListener("input", () => inp.classList.toggle("changed", inp.value !== (f ? f.value : "")));
+      inputs[key] = { inp, orig: f ? f.value : "" };
+      const isMissing = !f && flags.some((x) => x.field === key);
+      return el("div", { class: "field" + (f && f.needsReview ? " review" : "") + (isMissing ? " missing" : "") },
+        el("div", {}, el("div", { class: "nm" }, label),
+          el("div", { class: "src" }, f ? `${SOURCE[f.source] || f.source}${f.label ? " · «" + f.label + "»" : ""}` : "no encontrado")),
+        el("div", { class: "val" }, inp,
+          f ? el("div", { class: "val-meta" }, meter(f, threshold), el("div", { class: "tags" }, tagsFor(f))) : null));
+    })));
+
+    // Ítems
+    const items = d.lineItems || [];
+    const itemsBox = items.length ? el("details", { class: "box", open: true }, el("summary", {}, `Ítems detectados (${items.length})`),
+      el("table", { class: "items" }, el("thead", {}, el("tr", {}, el("th", {}, "Descripción"), el("th", {}, "Cant."), el("th", {}, "Importe"), el("th", {}, "Conf."))),
+        el("tbody", {}, ...items.map((li) => el("tr", {}, el("td", {}, li.descripcion || ""), el("td", {}, li.cantidad || ""), el("td", {}, li.importe || ""),
+          el("td", {}, `${Number(li.confidence || 0).toFixed(0)} %`)))))) : null;
+
+    // Trazabilidad
+    const hist = d.history || [];
+    const histBox = el("details", { class: "box" }, el("summary", {}, `Trazabilidad (${hist.length} eventos)`),
+      el("ul", { class: "timeline", style: "margin-top:10px" }, ...hist.map((h) => el("li", {},
+        el("b", {}, (STATUS[h.status] || { label: h.status }).label), el("span", { class: "muted" }, ` · ${fmtDate(h.at)} · ${h.by}`),
+        el("div", { class: "muted" }, h.detail || ""),
+        (h.changes || []).length ? el("div", { class: "small" }, h.changes.map((c) => `${c.field}: «${c.from ?? "—"}» → «${c.to}»`).join(" · ")) : null))));
+
+    if (saveBtn) saveBtn.addEventListener("click", async () => {
+      const changed = {};
+      for (const [k, { inp, orig }] of Object.entries(inputs)) if (inp.value !== orig) changed[k] = inp.value;
+      if (!$("reviewer").value.trim()) { $("reviewer").focus(); return toast("Escribe tu nombre como revisor (queda en la trazabilidad)", "err"); }
+      saveBtn.disabled = true; saveBtn.replaceChildren(el("span", { class: "spin" }), "Guardando…");
+      try {
+        const r = await api("documents/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify({ fields: changed, reviewer: $("reviewer").value.trim(), approve: true }) });
+        toast(`Aprobado · ${r.changes.length} corrección${r.changes.length === 1 ? "" : "es"}`, "ok");
+        await refresh(false); openDoc(id);
+      } catch (e) { toast(e.message, "err"); saveBtn.disabled = false; saveBtn.textContent = "Guardar y aprobar"; }
+    });
+
+    $("detail").replaceChildren(head, el("div", { class: "detail-body" },
+      el("div", { class: "prev-wrap" }, prevLoading, preview),
+      el("div", {}, callout, d.fields ? groups : el("p", { class: "muted" }, "Este documento no llegó a la extracción, por eso no tiene campos."), itemsBox, histBox)));
+    document.querySelectorAll(".row").forEach((r) => r.classList.toggle("sel", r.textContent.startsWith(displayName(d))));
+  }
+
+  // ---------------------------------------------------------------- eventos
+  const how = $("how");
+  const setHow = (open) => { how.hidden = !open; store.set("howHidden", open ? "" : "1"); $("toggleHow").textContent = open ? "Ocultar explicación" : "¿Cómo funciona?"; };
+  $("toggleHow").onclick = () => setHow(how.hidden);
+  $("closeHow").onclick = () => setHow(false);
+  setHow(store.get("howHidden") !== "1");
+
+  $("connect").onclick = async () => {
+    if (!$("apikey").value.trim()) return toast("Pega la clave de API (API Gateway → Claves de API)", "err");
+    const b = $("connect"); b.disabled = true; b.replaceChildren(el("span", { class: "spin" }), "Conectando…");
+    try { await refresh(true); } finally { b.disabled = false; b.textContent = connected ? "Reconectar" : "Conectar"; }
+  };
+  $("apikey").addEventListener("keydown", (e) => { if (e.key === "Enter") $("connect").click(); });
+  const drop = $("drop"), fileIn = $("file");
+  fileIn.addEventListener("change", () => { uploadFiles([...fileIn.files]); fileIn.value = ""; });
+  drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileIn.click(); } });
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => uploadFiles([...e.dataTransfer.files]));
+
+  $("reviewer").value = store.get("reviewer");
+  $("apikey").value = sess.get("apikey");
+  renderKpis({}); renderChips(null);
+  $("list").replaceChildren(el("div", { class: "empty" }, "Conecta con tu clave de API para ver los documentos."));
+  if ($("apikey").value) refresh(true);
+})();
+</script>
+</body>
+</html>

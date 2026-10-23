@@ -1,0 +1,64 @@
+{
+  "_descripcion": "Resultado esperado por archivo. status_in: estados aceptables; flags_any: al menos una de estas banderas debe aparecer; min_campos: campos obligatorios extraídos como mínimo (de 5).",
+  "01_factura_limpia.png": {
+    "status_in": [
+      "PROCESSED"
+    ],
+    "flags_any": [],
+    "min_campos": 5,
+    "fase": 1
+  },
+  "02_factura_limpia.pdf": {
+    "status_in": [
+      "PROCESSED"
+    ],
+    "flags_any": [],
+    "min_campos": 5,
+    "fase": 1
+  },
+  "03_factura_baja_calidad.jpg": {
+    "status_in": [
+      "NEEDS_REVIEW"
+    ],
+    "flags_any": [
+      "LOW_CONFIDENCE",
+      "MISSING",
+      "FORMAT",
+      "TOTAL_MISMATCH",
+      "ITEMS_MISMATCH"
+    ],
+    "min_campos": 3,
+    "fase": 1
+  },
+  "04_factura_total_inconsistente.png": {
+    "status_in": [
+      "NEEDS_REVIEW"
+    ],
+    "flags_any": [
+      "TOTAL_MISMATCH",
+      "ITEMS_MISMATCH"
+    ],
+    "min_campos": 5,
+    "fase": 1
+  },
+  "06_factura_sin_numero.png": {
+    "status_in": [
+      "NEEDS_REVIEW"
+    ],
+    "flags_any": [
+      "MISSING"
+    ],
+    "min_campos": 4,
+    "fase": 1
+  },
+  "05_factura_duplicada.png": {
+    "status_in": [
+      "NEEDS_REVIEW"
+    ],
+    "flags_any": [
+      "DUPLICATE"
+    ],
+    "min_campos": 5,
+    "fase": 2
+  }
+}

@@ -1,0 +1,38 @@
+digraph R09 {
+  graph [rankdir=TB, fontname="Helvetica", fontsize=13, pad=0.25, nodesep=0.6, ranksep=0.45, bgcolor="white", newrank=true, splines=spline];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12, color="#5b6475", penwidth=1.3, margin="0.16,0.08", width=3.2];
+  edge  [fontname="Helvetica", fontsize=10.5, color="#5b6475"];
+
+  subgraph cluster_aws {
+    label="AWS Learner Lab · us-east-1 · rol LabRole · etiqueta proyecto=final"; labelloc=b; labeljust=l; style="rounded,dashed"; color="#9aa3b2"; fontsize=12.5;
+    subgraph cluster_proc { label="Procesamiento automático (asíncrono)"; labelloc=b; labeljust=c; style="rounded"; color="#d8dde6"; fontsize=11.5;
+      s3     [label="S3 privado  ucb-proyecto-sars-docs-0039\nincoming/ (originales) · results/ (JSON Textract)\nSSE-S3 · versionado · solo HTTPS", fillcolor="#e8f3e8"];
+      ingest [label="Lambda  sars-r09-ingest\nvalida tipo y tamaño · registro idempotente", fillcolor="#fff3e0"];
+      sqs    [label="SQS  sars-r09-jobs\n+ DLQ tras 3 intentos", fillcolor="#fde8ec"];
+      worker [label="Lambda  sars-r09-worker\nconcurrencia máx. 2 · backoff exponencial\nvalidación: confianza + reglas de negocio", fillcolor="#fff3e0"];
+      tx     [label="Amazon Textract\nAnalyzeExpense", fillcolor="#e6f0ff"];
+    }
+    subgraph cluster_rev { label="Revisión humana (síncrona)"; labelloc=b; labeljust=c; style="rounded"; color="#d8dde6"; fontsize=11.5;
+      apigw  [label="API Gateway REST\nclave de API + plan de uso", fillcolor="#f1e8fb"];
+      review [label="Lambda  sars-r09-review\nvista web + API · URL prefirmada 5 min", fillcolor="#fff3e0"];
+    }
+    ddb [label="DynamoDB  sars-r09-documents\nestado · campos · confianza · banderas · historial", fillcolor="#e6f0ff", width=4.2];
+    cw  [label="CloudWatch: logs JSON · métricas EMF · dashboard · 3 alarmas  →  SNS (correo)", fillcolor="#eef1f6", width=6.5];
+  }
+  cli  [label="Usuario: sube la factura", shape=oval, fillcolor="#eef1f6", width=2.6];
+  user [label="Revisor: corrige y aprueba", shape=oval, fillcolor="#eef1f6", width=2.6];
+  {rank=same; cli; user}
+  {rank=same; s3; apigw}
+  {rank=same; ingest; review}
+
+  cli -> s3        [label=" 1  PutObject"];
+  s3 -> ingest     [label=" 2  evento ObjectCreated"];
+  ingest -> sqs    [label=" 3  mensaje (QUEUED)"];
+  sqs -> worker    [label=" 4  lote ≤ 5"];
+  worker -> tx     [label=" 5  analiza", dir=both, arrowtail=none];
+  worker -> ddb    [label=" 6  PROCESSED / NEEDS_REVIEW"];
+  user -> apigw    [label=" HTTPS + x-api-key"];
+  apigw -> review;
+  review -> ddb    [label=" 7  consulta / corrige → REVIEWED"];
+  ddb -> cw        [style=invis];
+}

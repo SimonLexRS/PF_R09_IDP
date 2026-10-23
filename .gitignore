@@ -1,0 +1,19 @@
+# Credenciales: NUNCA al repositorio
+.aws/
+credentials
+*.pem
+*.key
+.env
+.env.*
+
+# Artefactos
+build/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.DS_Store
+
+# Videos y archivos pesados
+*.mp4
+*.mov

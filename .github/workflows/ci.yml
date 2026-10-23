@@ -1,0 +1,16 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements-dev.txt
+      - name: Lint de la plantilla CloudFormation
+        run: cfn-lint infra/template.yaml -i W3002
+      - name: Pruebas unitarias e integración (AWS simulado)
+        run: pytest -q
+      - name: Sintaxis de scripts
+        run: bash -n scripts/*.sh && python -m py_compile src/*.py scripts/*.py
